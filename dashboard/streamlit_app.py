@@ -31,7 +31,7 @@ API_BASE_URL = "http://localhost:8000/api/v1"
 def fetch_data(endpoint: str) -> List[Dict]:
     """Получить данные из API"""
     try:
-        response = requests.get(f"{API_BASE_URL}/{endpoint}")
+        response = requests.get(f"{API_BASE_URL}/{endpoint}", timeout=10)
         response.raise_for_status()
         return response.json()
     except Exception as e:
@@ -42,12 +42,38 @@ def fetch_data(endpoint: str) -> List[Dict]:
 def fetch_stats() -> Dict:
     """Получить статистику"""
     try:
-        response = requests.get(f"{API_BASE_URL}/stats")
+        response = requests.get(f"{API_BASE_URL}/stats", timeout=10)
         response.raise_for_status()
         return response.json()
     except Exception as e:
         st.error(f"Ошибка загрузки статистики: {e}")
         return {}
+
+
+def trigger_collection_by_hashtag(hashtag: str, limit: int = 30):
+    """Запустить сбор по хэштегу через API"""
+    try:
+        # Сначала добавляем источник
+        response = requests.post(
+            f"{API_BASE_URL}/sources",
+            json={"source_type": "hashtag", "name": hashtag},
+            timeout=10
+        )
+
+        # Затем запускаем сбор
+        with st.spinner(f'🔍 Собираем Reels по #{hashtag}... Это может занять 1-2 минуты...'):
+            response = requests.post(
+                f"{API_BASE_URL}/collect/trigger",
+                timeout=300  # 5 минут
+            )
+            response.raise_for_status()
+            return True
+    except requests.exceptions.Timeout:
+        st.warning("⏱️ Сбор занимает больше времени чем ожидалось. Данные будут доступны через несколько минут.")
+        return True
+    except Exception as e:
+        st.error(f"Ошибка сбора: {e}")
+        return False
 
 
 def format_number(num: int) -> str:
@@ -69,11 +95,11 @@ def display_reel_card(reel: Dict):
             if reel.get('video_url'):
                 st.video(reel['video_url'])
             else:
-                st.image("https://via.placeholder.com/300x400?text=No+Preview", use_column_width=True)
+                st.image("https://via.placeholder.com/300x400?text=Instagram+Reel", use_column_width=True)
 
         with col2:
-            # Информация о Reel
-            st.markdown(f"### [{reel['reel_id']}]({reel['url']})")
+            # Кликабельная ссылка на Reel
+            st.markdown(f"### 🎬 [{reel['reel_id']}]({reel['url']})")
 
             # Описание
             if reel.get('caption'):
@@ -122,6 +148,9 @@ def display_reel_card(reel: Dict):
             if reel['is_viral']:
                 st.success("✅ ВИРУСНЫЙ КОНТЕНТ")
 
+            # Прямая ссылка
+            st.markdown(f"🔗 [Открыть в Instagram]({reel['url']})")
+
         st.divider()
 
 
@@ -134,7 +163,7 @@ st.sidebar.markdown("---")
 # Навигация
 page = st.sidebar.radio(
     "Навигация",
-    ["📊 Обзор", "🔥 Топ вирусных", "🚀 Быстрорастущие", "📈 Трендовые хэштеги", "🎵 Трендовое аудио", "⚙️ Источники"]
+    ["🔍 Поиск по хэштегу", "📊 Обзор", "🔥 Топ вирусных", "🚀 Быстрорастущие", "📈 Трендовые хэштеги", "⚙️ Источники"]
 )
 
 st.sidebar.markdown("---")
@@ -148,13 +177,117 @@ if stats:
     st.sidebar.metric("Avg Engagement", f"{stats.get('avg_engagement_rate', 0):.2%}")
 
 st.sidebar.markdown("---")
-st.sidebar.info("Обновляется автоматически каждые 30 минут")
+st.sidebar.info("💡 Введите хэштег для поиска вирусных Reels")
+
 
 # Главная область
 
 
+# 🔍 ПОИСК ПО ХЭШТЕГУ (НОВАЯ СТРАНИЦА!)
+if page == "🔍 Поиск по хэштегу":
+    st.title("🔍 Поиск вирусных Reels по хэштегу")
+    st.markdown("Введите хэштег и найдите самые вирусные Reels прямо сейчас!")
+
+    st.markdown("---")
+
+    # Форма поиска
+    col1, col2, col3 = st.columns([3, 1, 1])
+
+    with col1:
+        hashtag_input = st.text_input(
+            "Введите хэштег",
+            placeholder="путешествие, fitness, food...",
+            help="Введите хэштег БЕЗ символа #"
+        )
+
+    with col2:
+        limit = st.selectbox("Количество", [10, 20, 30, 50], index=1)
+
+    with col3:
+        st.write("")  # spacing
+        search_button = st.button("🔍 Найти", type="primary", use_container_width=True)
+
+    st.markdown("---")
+
+    # Популярные хэштеги (быстрый доступ)
+    st.markdown("**🔥 Популярные хэштеги:**")
+    popular_hashtags = ["travel", "fitness", "food", "fashion", "motivation", "nature", "art", "music"]
+
+    cols = st.columns(8)
+    for idx, tag in enumerate(popular_hashtags):
+        with cols[idx]:
+            if st.button(f"#{tag}", key=f"popular_{tag}", use_container_width=True):
+                hashtag_input = tag
+                search_button = True
+
+    st.markdown("---")
+
+    # Обработка поиска
+    if search_button and hashtag_input:
+        hashtag = hashtag_input.strip().lower().replace('#', '')
+
+        st.info(f"🔍 Ищем вирусные Reels по хэштегу **#{hashtag}**...")
+
+        # Сначала проверяем есть ли уже данные в БД
+        existing_reels = fetch_data(f"hashtags/{hashtag}?limit={limit}")
+
+        if existing_reels:
+            st.success(f"✅ Найдено {len(existing_reels)} Reels по #{hashtag} в базе данных!")
+
+            # Кнопка для обновления данных
+            if st.button("🔄 Собрать свежие данные из Instagram"):
+                if trigger_collection_by_hashtag(hashtag, limit):
+                    st.success("✅ Сбор завершён! Обновите страницу.")
+                    st.rerun()
+
+            st.markdown("---")
+
+            # Сортировка
+            sort_by = st.selectbox(
+                "Сортировать по:",
+                ["Viral Score", "Просмотрам", "Лайкам", "Engagement Rate", "Дате публикации"]
+            )
+
+            # Применяем сортировку
+            df = pd.DataFrame(existing_reels)
+            if sort_by == "Viral Score":
+                df = df.sort_values('viral_score', ascending=False)
+            elif sort_by == "Просмотрам":
+                df = df.sort_values('views', ascending=False)
+            elif sort_by == "Лайкам":
+                df = df.sort_values('likes', ascending=False)
+            elif sort_by == "Engagement Rate":
+                df = df.sort_values('engagement_rate', ascending=False)
+            elif sort_by == "Дате публикации":
+                df = df.sort_values('publish_date', ascending=False)
+
+            sorted_reels = df.to_dict('records')
+
+            # Показываем результаты
+            for reel in sorted_reels:
+                display_reel_card(reel)
+
+        else:
+            # Данных нет - предлагаем собрать
+            st.warning(f"⚠️ Данных по #{hashtag} пока нет в базе")
+
+            st.markdown("### Собрать данные из Instagram?")
+            st.info(f"Мы соберём {limit} самых популярных Reels по хэштегу **#{hashtag}**")
+
+            col1, col2 = st.columns([1, 3])
+            with col1:
+                if st.button("✅ Да, собрать!", type="primary", use_container_width=True):
+                    if trigger_collection_by_hashtag(hashtag, limit):
+                        st.success("✅ Сбор завершён! Обновляем страницу...")
+                        time.sleep(2)
+                        st.rerun()
+
+            with col2:
+                st.markdown("*Сбор займёт 1-2 минуты*")
+
+
 # 📊 Обзор
-if page == "📊 Обзор":
+elif page == "📊 Обзор":
     st.title("📊 Обзор системы")
 
     if stats:
@@ -224,21 +357,6 @@ if page == "📊 Обзор":
                 )
                 st.plotly_chart(fig, use_container_width=True)
 
-        # Распределение engagement
-        st.subheader("📊 Распределение Engagement Rate")
-        all_reels = fetch_data("viral?limit=100")
-
-        if all_reels:
-            df = pd.DataFrame(all_reels)
-            fig = px.histogram(
-                df,
-                x='engagement_rate',
-                nbins=30,
-                title='Распределение Engagement Rate',
-                labels={'engagement_rate': 'Engagement Rate', 'count': 'Количество'}
-            )
-            st.plotly_chart(fig, use_container_width=True)
-
 
 # 🔥 Топ вирусных
 elif page == "🔥 Топ вирусных":
@@ -266,6 +384,7 @@ elif page == "🔥 Топ вирусных":
             display_reel_card(reel)
     else:
         st.warning("Нет данных для отображения")
+        st.info("💡 Перейдите на страницу '🔍 Поиск по хэштегу' чтобы собрать данные")
 
 
 # 🚀 Быстрорастущие
@@ -294,6 +413,7 @@ elif page == "🚀 Быстрорастущие":
             display_reel_card(reel)
     else:
         st.warning("Нет данных для отображения")
+        st.info("💡 Перейдите на страницу '🔍 Поиск по хэштегу' чтобы собрать данные")
 
 
 # 📈 Трендовые хэштеги
@@ -318,140 +438,63 @@ elif page == "📈 Трендовые хэштеги":
                         hashtag_scores[tag] = []
                     hashtag_scores[tag].append(reel['viral_score'])
 
-        # Создаем DataFrame
-        hashtag_data = []
-        for tag, count in hashtag_counts.items():
-            avg_score = sum(hashtag_scores[tag]) / len(hashtag_scores[tag])
-            hashtag_data.append({
-                'hashtag': tag,
-                'count': count,
-                'avg_viral_score': avg_score
-            })
-
-        df = pd.DataFrame(hashtag_data)
-        df = df.sort_values('count', ascending=False).head(20)
-
-        # График
-        col1, col2 = st.columns(2)
-
-        with col1:
-            st.subheader("Топ 20 хэштегов по частоте")
-            fig = px.bar(
-                df,
-                x='hashtag',
-                y='count',
-                title='Количество использований',
-                labels={'count': 'Количество', 'hashtag': 'Хэштег'}
-            )
-            fig.update_xaxis(tickangle=-45)
-            st.plotly_chart(fig, use_container_width=True)
-
-        with col2:
-            st.subheader("Топ 20 хэштегов по Viral Score")
-            df_sorted = df.sort_values('avg_viral_score', ascending=False)
-            fig = px.bar(
-                df_sorted,
-                x='hashtag',
-                y='avg_viral_score',
-                title='Средний Viral Score',
-                labels={'avg_viral_score': 'Avg Viral Score', 'hashtag': 'Хэштег'},
-                color='avg_viral_score',
-                color_continuous_scale='Reds'
-            )
-            fig.update_xaxis(tickangle=-45)
-            st.plotly_chart(fig, use_container_width=True)
-
-        # Таблица
-        st.subheader("Детальная статистика")
-        st.dataframe(
-            df.sort_values('count', ascending=False),
-            use_container_width=True,
-            hide_index=True
-        )
-
-        # Поиск по хэштегу
-        st.markdown("---")
-        st.subheader("🔍 Поиск Reels по хэштегу")
-
-        selected_hashtag = st.selectbox(
-            "Выберите хэштег",
-            options=df['hashtag'].tolist()
-        )
-
-        if st.button("Показать Reels"):
-            hashtag_reels = fetch_data(f"hashtags/{selected_hashtag}")
-
-            if hashtag_reels:
-                st.success(f"Найдено {len(hashtag_reels)} Reels с хэштегом #{selected_hashtag}")
-
-                for reel in hashtag_reels[:10]:  # Показываем первые 10
-                    display_reel_card(reel)
-    else:
-        st.warning("Нет данных для отображения")
-
-
-# 🎵 Трендовое аудио
-elif page == "🎵 Трендовое аудио":
-    st.title("🎵 Трендовое аудио")
-    st.markdown("Самые популярные аудиодорожки среди вирусных Reels")
-    st.markdown("---")
-
-    # Получаем все вирусные Reels
-    reels = fetch_data("viral?limit=100")
-
-    if reels:
-        # Собираем все аудио
-        audio_counts = {}
-        audio_scores = {}
-
-        for reel in reels:
-            audio = reel.get('audio_name')
-            if audio and audio.strip():
-                audio_counts[audio] = audio_counts.get(audio, 0) + 1
-                if audio not in audio_scores:
-                    audio_scores[audio] = []
-                audio_scores[audio].append(reel['viral_score'])
-
-        if audio_counts:
+        if hashtag_counts:
             # Создаем DataFrame
-            audio_data = []
-            for audio, count in audio_counts.items():
-                avg_score = sum(audio_scores[audio]) / len(audio_scores[audio])
-                audio_data.append({
-                    'audio': audio[:50] + "..." if len(audio) > 50 else audio,
-                    'full_audio': audio,
+            hashtag_data = []
+            for tag, count in hashtag_counts.items():
+                avg_score = sum(hashtag_scores[tag]) / len(hashtag_scores[tag])
+                hashtag_data.append({
+                    'hashtag': tag,
                     'count': count,
                     'avg_viral_score': avg_score
                 })
 
-            df = pd.DataFrame(audio_data)
+            df = pd.DataFrame(hashtag_data)
             df = df.sort_values('count', ascending=False).head(20)
 
             # График
-            st.subheader("Топ 20 аудиодорожек")
-            fig = px.bar(
-                df,
-                y='audio',
-                x='count',
-                orientation='h',
-                title='Количество использований',
-                labels={'count': 'Количество', 'audio': 'Аудио'},
-                color='avg_viral_score',
-                color_continuous_scale='Viridis'
-            )
-            st.plotly_chart(fig, use_container_width=True)
+            col1, col2 = st.columns(2)
+
+            with col1:
+                st.subheader("Топ 20 хэштегов по частоте")
+                fig = px.bar(
+                    df,
+                    x='hashtag',
+                    y='count',
+                    title='Количество использований',
+                    labels={'count': 'Количество', 'hashtag': 'Хэштег'}
+                )
+                fig.update_xaxis(tickangle=-45)
+                st.plotly_chart(fig, use_container_width=True)
+
+            with col2:
+                st.subheader("Топ 20 хэштегов по Viral Score")
+                df_sorted = df.sort_values('avg_viral_score', ascending=False)
+                fig = px.bar(
+                    df_sorted,
+                    x='hashtag',
+                    y='avg_viral_score',
+                    title='Средний Viral Score',
+                    labels={'avg_viral_score': 'Avg Viral Score', 'hashtag': 'Хэштег'},
+                    color='avg_viral_score',
+                    color_continuous_scale='Reds'
+                )
+                fig.update_xaxis(tickangle=-45)
+                st.plotly_chart(fig, use_container_width=True)
 
             # Таблица
             st.subheader("Детальная статистика")
-            display_df = df[['full_audio', 'count', 'avg_viral_score']].copy()
-            display_df.columns = ['Аудио', 'Использований', 'Avg Viral Score']
             st.dataframe(
-                display_df,
+                df.sort_values('count', ascending=False),
                 use_container_width=True,
                 hide_index=True
             )
+
+            # Поиск по хэштегу - ссылка на новую страницу
+            st.markdown("---")
+            st.info("💡 Хотите найти Reels по конкретному хэштегу? Перейдите на страницу '🔍 Поиск по хэштегу'")
         else:
-            st.info("Информация об аудио не доступна для текущих Reels")
+            st.info("Данных о хэштегах пока нет")
     else:
         st.warning("Нет данных для отображения")
 
@@ -550,7 +593,7 @@ elif page == "⚙️ Источники":
             if st.button("▶️ Запустить сбор вручную", use_container_width=True):
                 with st.spinner("Идет сбор данных..."):
                     try:
-                        response = requests.post(f"{API_BASE_URL}/collect/trigger")
+                        response = requests.post(f"{API_BASE_URL}/collect/trigger", timeout=300)
                         response.raise_for_status()
                         st.success("✅ Сбор данных завершен!")
                     except Exception as e:
@@ -567,6 +610,7 @@ elif page == "⚙️ Источники":
                         st.error(f"Ошибка: {e}")
     else:
         st.info("Источники еще не добавлены. Добавьте первый источник выше!")
+
 
 # Футер
 st.sidebar.markdown("---")

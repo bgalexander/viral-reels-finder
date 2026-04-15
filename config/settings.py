@@ -12,8 +12,10 @@ class Settings(BaseSettings):
     DATABASE_URL: str = "postgresql://user:password@localhost:5432/viral_reels"
 
     # Instagram
-    INSTAGRAM_USERNAME: Optional[str] = None
-    INSTAGRAM_PASSWORD: Optional[str] = None
+    INSTAGRAM_USERNAME: str = ""  # Оставляем пустым!
+    INSTAGRAM_PASSWORD: str = ""  # Оставляем пустым!
+    # RapidAPI
+    RAPIDAPI_KEY: str = ""
 
     # Redis
     REDIS_URL: str = "redis://localhost:6379/0"
@@ -25,8 +27,8 @@ class Settings(BaseSettings):
     API_WORKERS: int = 4
 
     # Scraping
-    SCRAPE_DELAY_MIN: int = 3  # секунды
-    SCRAPE_DELAY_MAX: int = 7  # секунды
+    SCRAPE_DELAY_MIN: float = 3.0  # Минимум 3 секунды
+    SCRAPE_DELAY_MAX: float = 7.0  # Максимум 7 секунд
     MAX_RETRIES: int = 3
     REQUEST_TIMEOUT: int = 30
     USE_PROXY: bool = False
