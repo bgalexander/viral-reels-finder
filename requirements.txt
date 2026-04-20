@@ -35,3 +35,8 @@ tenacity==8.2.3
 pytest==7.4.4
 black==23.12.1
 flake8==7.0.0
+
+streamlit>=1.28.0
+pandas>=2.0.0
+requests>=2.31.0
+plotly>=5.18.0

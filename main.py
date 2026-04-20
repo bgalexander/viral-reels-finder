@@ -13,7 +13,7 @@ class RapidAPICollector:
         self.headers = {
             "x-rapidapi-key": self.api_key,
             "x-rapidapi-host": self.api_host,
-            "Content-Type": "application/json"
+
         }
         self.proxies = None
         if proxy:
